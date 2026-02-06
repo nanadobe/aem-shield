@@ -2,27 +2,23 @@
   "name": "aem-shield",
   "version": "1.0.0",
   "description": "AEM Shield - Professional WAF Rules Management Studio for Adobe Experience Manager",
-  "homepage": "https://YOUR_GITHUB_USERNAME.github.io/aem-shield",
+  "homepage": "https://nanadobe.github.io/aem-shield",
   "private": true,
   "dependencies": {
+    "framer-motion": "^11.0.3",
+    "js-yaml": "^4.1.0",
+    "lucide-react": "^0.312.0",
+    "prism-react-renderer": "^2.3.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-scripts": "5.0.1",
-    "js-yaml": "^4.1.0",
-    "prism-react-renderer": "^2.3.1",
-    "lucide-react": "^0.312.0",
-    "framer-motion": "^11.0.3"
-  },
-  "devDependencies": {
-    "gh-pages": "^6.1.1"
+    "react-scripts": "5.0.1"
   },
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
+    "build:docs": "react-scripts build && rm -rf docs && mv build docs",
     "test": "react-scripts test",
-    "eject": "react-scripts eject",
-    "predeploy": "npm run build",
-    "deploy": "gh-pages -d build"
+    "eject": "react-scripts eject"
   },
   "browserslist": {
     "production": [

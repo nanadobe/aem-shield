@@ -3,7 +3,7 @@ node_modules/
 /.pnp
 .pnp.js
 
-# Build output
+# Build output (but NOT docs - that's for GitHub Pages)
 /build
 /dist
 

@@ -1,0 +1,13 @@
+{
+  "files": {
+    "main.css": "/aem-shield/static/css/main.fba7e90f.css",
+    "main.js": "/aem-shield/static/js/main.3a7e9eb3.js",
+    "index.html": "/aem-shield/index.html",
+    "main.fba7e90f.css.map": "/aem-shield/static/css/main.fba7e90f.css.map",
+    "main.3a7e9eb3.js.map": "/aem-shield/static/js/main.3a7e9eb3.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.fba7e90f.css",
+    "static/js/main.3a7e9eb3.js"
+  ]
+}
