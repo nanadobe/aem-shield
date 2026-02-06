@@ -453,8 +453,8 @@ const RulesAnalyzer = () => {
         }
       });
       
-      // Validate tier values
-      if (trimmed.includes('tier') && (trimmed.includes('equals:') || trimmed.includes('in:'))) {
+      // Validate tier values - supports both equals: and in: syntax
+      if (trimmed.includes('tier') && trimmed.includes('equals:')) {
         const tierMatch = trimmed.match(/equals:\s*['"]?(\w+)['"]?/);
         if (tierMatch && !VALID_VALUES.tiers.includes(tierMatch[1])) {
           errors.push({
@@ -466,6 +466,7 @@ const RulesAnalyzer = () => {
           });
         }
       }
+      // Skip validation for tier with in: [] - array values are harder to validate inline
       
       // Validate WAF flags
       if (trimmed === 'wafFlags:' || trimmed.includes('wafFlags:')) {

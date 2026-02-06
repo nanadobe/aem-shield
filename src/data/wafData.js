@@ -947,6 +947,11 @@ export const EXAMPLE_RULES = [
 
 export const SAMPLE_CDN_YAML = `kind: "CDN"
 version: "1"
+metadata:
+  envTypes:
+    - dev
+    - stage
+    - prod
 data:
   trafficFilters:
     rules:
@@ -955,54 +960,54 @@ data:
       # Available with Sites/Forms license (included)
       # ================================================
 
-      # Rate limit at ORIGIN layer - 100 req/sec to protect backend
-      - name: limit-origin-requests-client-ip
+      # Rate limit at ORIGIN layer - protect backend from traffic spikes
+      - name: rate-limit-origin-requests
         when:
           reqProperty: tier
-          equals: 'publish'
+          equals: "publish"
         rateLimit:
           limit: 100
           window: 10
-          count: fetches  # Only count origin requests (cache misses)
-          penalty: 300    # Block for 5 minutes
-          groupBy:
-            - reqProperty: clientIp
-        action: log
-
-      # Rate limit at CDN EDGE layer - 500 req/sec including cached
-      - name: limit-requests-client-ip
-        when:
-          reqProperty: tier
-          equals: 'publish'
-        rateLimit:
-          limit: 500
-          window: 10
-          count: all  # Count all requests including cached
+          count: fetches
           penalty: 300
           groupBy:
             - reqProperty: clientIp
         action: log
-        alert: true  # Get notified when triggered
 
-      # Block OFAC sanctioned countries
-      - name: ofac-countries
+      # Rate limit at CDN EDGE layer - all requests including cached
+      - name: rate-limit-edge-requests
+        when:
+          reqProperty: tier
+          equals: "publish"
+        rateLimit:
+          limit: 500
+          window: 10
+          count: all
+          penalty: 300
+          groupBy:
+            - reqProperty: clientIp
+        action: log
+
+      # Block requests from OFAC sanctioned countries
+      - name: block-ofac-countries
+        when:
+          reqProperty: clientCountry
+          in:
+            - SY
+            - BY
+            - MM
+            - KP
+            - IR
+            - CU
+            - SD
+        action: block
+
+      # Block suspicious paths
+      - name: block-admin-paths
         when:
           allOf:
-            - { reqProperty: tier, in: ["author", "publish"] }
-            - reqProperty: clientCountry
-              in:
-                - SY  # Syria
-                - BY  # Belarus
-                - MM  # Myanmar
-                - KP  # North Korea
-                - IQ  # Iraq
-                - CD  # Congo
-                - SD  # Sudan
-                - IR  # Iran
-                - LR  # Liberia
-                - ZW  # Zimbabwe
-                - CU  # Cuba
-                - CI  # Côte d'Ivoire
+            - { reqProperty: tier, equals: "publish" }
+            - { reqProperty: path, like: "/admin/*" }
         action: block
 
       # ================================================
@@ -1011,22 +1016,42 @@ data:
       # ================================================
 
       # Block attacks from known malicious IPs - SAFE to BLOCK immediately
-      - name: attacks-from-bad-ips-globally
+      - name: block-attacks-from-bad-ips
         when:
           reqProperty: tier
-          in: ["author", "publish"]
+          equals: "publish"
         action:
-          type: block  # Safe to block - dual validation
+          type: block
           wafFlags:
             - ATTACK-FROM-BAD-IP
 
-      # Log general attacks - Start LOG, switch to BLOCK after validation
-      - name: attacks-from-any-ips-globally
+      # Log general attacks - Start with LOG, move to BLOCK after review
+      - name: log-all-attacks
         when:
           reqProperty: tier
-          in: ["author", "publish"]
+          equals: "publish"
         action:
-          type: log  # Start with log, analyze CDN logs first
+          type: log
           wafFlags:
             - ATTACK
+
+      # Block SQL injection attempts
+      - name: block-sqli-attacks
+        when:
+          reqProperty: tier
+          equals: "publish"
+        action:
+          type: block
+          wafFlags:
+            - SQLI
+
+      # Block XSS attempts
+      - name: block-xss-attacks
+        when:
+          reqProperty: tier
+          equals: "publish"
+        action:
+          type: block
+          wafFlags:
+            - XSS
 `;
