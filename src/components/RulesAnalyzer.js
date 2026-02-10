@@ -468,14 +468,15 @@ const RulesAnalyzer = () => {
                      trimmed.startsWith('actions:') || trimmed === 'actions:')) {
         hasAction = true;
         
-        // Validate action value if inline - CONTEXT AWARE
-        if (trimmed.includes(':') && trimmed !== 'action:') {
+        // Only validate inline action values like "action: block" (not "action:" or "actions:" alone)
+        // Skip validation for "actions:" as it's followed by an array
+        if (trimmed.startsWith('action:') && trimmed !== 'action:' && !trimmed.startsWith('actions:')) {
           const actionValue = trimmed.replace('action:', '').trim().replace(/['"]/g, '');
           const context = detectConfigContext(yaml, lineNum);
           const validActions = getValidActionsForContext(context);
           
-          // Only validate simple action values, not object actions
-          if (actionValue && !actionValue.includes('{') && !validActions.includes(actionValue)) {
+          // Only validate simple action values, not object actions (those start with nothing or have nested content)
+          if (actionValue && actionValue.length > 0 && !actionValue.includes('{')) {
             // Check if it's ANY valid action type (for loose validation)
             if (!VALID_VALUES.allActionTypes.includes(actionValue)) {
               errors.push({
@@ -488,6 +489,7 @@ const RulesAnalyzer = () => {
             }
           }
         }
+        // "actions:" (plural) is always valid - it's followed by an array of action objects
       }
       
       // Validate action type property (type: block, type: set, type: redirect, etc.)
