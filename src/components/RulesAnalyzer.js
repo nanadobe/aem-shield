@@ -380,6 +380,11 @@ const RulesAnalyzer = () => {
     let bracketStack = [];
     let inMultilineString = false;
     
+    // Track current section (trafficFilters, requestTransformations, origins, etc.)
+    let currentSection = null;
+    let sectionIndent = 0;
+    let inOrigins = false;  // Special flag for origins section (no rules structure)
+    
     // Basic YAML structure checks
     const basicChecks = validateBasicStructure(yaml, lines);
     errors.push(...basicChecks.errors);
@@ -390,9 +395,46 @@ const RulesAnalyzer = () => {
       const line = lines[i];
       const lineNum = i + 1;
       const trimmed = line.trim();
+      const indent = line.length - line.trimStart().length;
       
       // Skip empty lines and comments
       if (trimmed === '' || trimmed.startsWith('#')) continue;
+      
+      // Track section changes based on top-level config sections
+      // origins: is NOT a rules section - it's a list of origin definitions
+      if (trimmed === 'origins:' || trimmed.startsWith('origins:')) {
+        inOrigins = true;
+        inRules = false;
+        inRule = false;
+        currentSection = 'origins';
+        sectionIndent = indent;
+      }
+      // These are actual rules sections that require when:/action:
+      else if (trimmed === 'trafficFilters:' || trimmed.startsWith('trafficFilters:')) {
+        inOrigins = false;
+        currentSection = 'trafficFilters';
+        sectionIndent = indent;
+      }
+      else if (trimmed === 'requestTransformations:' || trimmed.startsWith('requestTransformations:')) {
+        inOrigins = false;
+        currentSection = 'requestTransformations';
+        sectionIndent = indent;
+      }
+      else if (trimmed === 'responseTransformations:' || trimmed.startsWith('responseTransformations:')) {
+        inOrigins = false;
+        currentSection = 'responseTransformations';
+        sectionIndent = indent;
+      }
+      else if (trimmed === 'redirects:' || trimmed.startsWith('redirects:')) {
+        inOrigins = false;
+        currentSection = 'redirects';
+        sectionIndent = indent;
+      }
+      else if (trimmed === 'originSelectors:' || trimmed.startsWith('originSelectors:')) {
+        inOrigins = false;
+        currentSection = 'originSelectors';
+        sectionIndent = indent;
+      }
       
       // Check for tabs (YAML should use spaces)
       if (line.includes('\t')) {
@@ -430,13 +472,41 @@ const RulesAnalyzer = () => {
         }
       }
       
-      // Rules section detection
-      if (trimmed === 'rules:' || trimmed.includes('rules:')) {
+      // Rules section detection (only for actual rules sections, NOT origins)
+      if (!inOrigins && (trimmed === 'rules:' || trimmed.includes('rules:'))) {
         inRules = true;
       }
       
-      // Rule start detection
-      if (inRules && trimmed.startsWith('- name:')) {
+      // Validate origin entries (different structure - no when/action required)
+      if (inOrigins && trimmed.startsWith('- name:')) {
+        // Origins just have name, domain, forwardCookie, etc. - no validation for when/action
+        const originName = trimmed.replace('- name:', '').trim().replace(/['"]/g, '');
+        if (!originName) {
+          errors.push({
+            line: lineNum,
+            type: 'value',
+            severity: 'error',
+            message: 'Origin name cannot be empty',
+            suggestion: 'Provide a name like "aem-origin" or "custom-backend"'
+          });
+        }
+        continue; // Skip rule validation for origins
+      }
+      
+      // Validate origin-specific properties
+      if (inOrigins) {
+        // Check for valid origin properties
+        const originPropMatch = trimmed.match(/^(\w+):/);
+        if (originPropMatch && !trimmed.startsWith('-')) {
+          const propName = originPropMatch[1];
+          const validOriginProps = ['name', 'domain', 'forwardCookie', 'forwardAuthorization', 'forwardHost', 'timeout', 'headers'];
+          // Don't flag as error - just skip validation for origin-specific content
+        }
+        continue; // Skip rule validation for anything in origins section
+      }
+      
+      // Rule start detection (only for actual rules sections)
+      if (inRules && !inOrigins && trimmed.startsWith('- name:')) {
         // Validate previous rule completeness
         if (inRule && currentRuleName) {
           const ruleValidation = validateRuleCompleteness(hasName, hasWhen, hasAction, currentRuleName, currentRuleStartLine);
