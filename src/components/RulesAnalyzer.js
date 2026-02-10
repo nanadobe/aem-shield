@@ -246,18 +246,40 @@ const RulesAnalyzer = () => {
   const detectConfigContext = (yaml, lineNum) => {
     const lines = yaml.split('\n').slice(0, lineNum);
     let context = 'unknown';
+    let inActionsArray = false;
     
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i].trim();
-      if (line.startsWith('trafficFilters:')) context = 'trafficFilters';
-      else if (line.startsWith('requestTransformations:')) context = 'requestTransformations';
-      else if (line.startsWith('responseTransformations:')) context = 'responseTransformations';
-      else if (line.startsWith('redirects:')) context = 'redirects';
-      else if (line.startsWith('originSelectors:')) context = 'originSelectors';
-      else if (line.startsWith('origins:')) context = 'origins';
       
-      if (context !== 'unknown') break;
+      // Check if we're inside an actions: array (transformations use plural)
+      if (line === 'actions:' || line.startsWith('actions:')) {
+        inActionsArray = true;
+      }
+      
+      // Detect main configuration section
+      if (line.startsWith('trafficFilters:')) {
+        context = 'trafficFilters';
+        break;
+      } else if (line.startsWith('requestTransformations:')) {
+        context = 'requestTransformations';
+        break;
+      } else if (line.startsWith('responseTransformations:')) {
+        context = 'responseTransformations';
+        break;
+      } else if (line.startsWith('redirects:')) {
+        context = 'redirects';
+        break;
+      } else if (line.startsWith('originSelectors:')) {
+        context = 'originSelectors';
+        break;
+      } else if (line.startsWith('origins:')) {
+        context = 'origins';
+        break;
+      }
     }
+    
+    // If we detected we're in an actions array but context is trafficFilters,
+    // it might actually be a transformation - but trafficFilters can also have nested action
     return context;
   };
 
@@ -411,21 +433,25 @@ const RulesAnalyzer = () => {
         }
       }
       
-      // Validate action type property (type: block, type: redirect, etc.)
+      // Validate action type property (type: block, type: set, type: redirect, etc.)
       if (trimmed.startsWith('type:') && inRule) {
         const typeValue = trimmed.replace('type:', '').trim().replace(/['"]/g, '');
         const context = detectConfigContext(yaml, lineNum);
         const validActions = getValidActionsForContext(context);
         
-        // Check against ALL valid action types (context may not always be clear)
-        if (typeValue && !VALID_VALUES.allActionTypes.includes(typeValue)) {
-          errors.push({
-            line: lineNum,
-            type: 'value',
-            severity: 'error',
-            message: `Invalid action type: "${typeValue}"`,
-            suggestion: `Valid types are: ${VALID_VALUES.allActionTypes.join(', ')}`
-          });
+        // Check against context-specific valid action types first
+        if (typeValue && !validActions.includes(typeValue)) {
+          // If not valid for context, check if it's valid for ANY context (might be misdetected context)
+          if (!VALID_VALUES.allActionTypes.includes(typeValue)) {
+            errors.push({
+              line: lineNum,
+              type: 'value',
+              severity: 'error',
+              message: `Invalid action type: "${typeValue}"`,
+              suggestion: `Valid types for ${context || 'CDN config'}: ${validActions.join(', ')}`
+            });
+          }
+          // Don't warn if it's valid in another context - context detection might be imperfect
         }
       }
       
