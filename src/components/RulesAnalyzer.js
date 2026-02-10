@@ -407,8 +407,9 @@ const RulesAnalyzer = () => {
         hasWhen = true;
       }
       
-      // Track 'action' presence
-      if (inRule && (trimmed.startsWith('action:') || trimmed === 'action:')) {
+      // Track 'action' or 'actions' presence (singular for trafficFilters, plural for transformations)
+      if (inRule && (trimmed.startsWith('action:') || trimmed === 'action:' || 
+                     trimmed.startsWith('actions:') || trimmed === 'actions:')) {
         hasAction = true;
         
         // Validate action value if inline - CONTEXT AWARE
@@ -822,8 +823,8 @@ const RulesAnalyzer = () => {
         line: lineNum,
         type: 'structure',
         severity: 'error',
-        message: `Rule "${ruleName}" is missing required "action"`,
-        suggestion: 'Add an action: block, log, or allow'
+        message: `Rule "${ruleName}" is missing required "action" or "actions"`,
+        suggestion: 'For trafficFilters use "action:", for transformations use "actions:"'
       });
     }
     
