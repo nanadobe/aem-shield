@@ -96,7 +96,7 @@ const VALID_VALUES = {
   redirectStatuses: [301, 302, 303, 307, 308],
   
   // Origin properties
-  originProperties: ['domain', 'timeout', 'forwardHost', 'forwardAuthorization', 'headers'],
+  originProperties: ['domain', 'timeout', 'forwardHost', 'forwardAuthorization', 'forwardCookie', 'headers', 'name'],
   
   // AEM Origin names
   aemOriginNames: ['static', 'aem'],
@@ -116,7 +116,25 @@ const VALID_VALUES = {
     'removeMarketingParams',
     'forwardHost', 
     'forwardAuthorization',
+    'forwardCookie',
     'exists'
+  ],
+  
+  // Transform/redirect action properties (not to be validated as reqProperty)
+  transformActionProperties: [
+    'type', 'op', 'match', 'replacement', 'value',
+    'reqProperty', 'reqHeader', 'reqCookie', 'queryParam',
+    'respProperty', 'respHeader', 'respCookie',
+    'var', 'logProperty', 'status', 'location', 'transform',
+    'originName'
+  ],
+  
+  // Properties that can appear in rule definitions (not conditions)
+  ruleDefinitionProperties: [
+    'name', 'when', 'action', 'actions', 'rateLimit', 'alert',
+    'limit', 'window', 'count', 'penalty', 'groupBy', 'wafFlags',
+    'allOf', 'anyOf', 'type', 'status', 'location', 'transform',
+    'op', 'match', 'replacement', 'value', 'originName'
   ]
 };
 
@@ -301,6 +319,44 @@ const RulesAnalyzer = () => {
     }
   };
 
+  // Check if current line is inside an actions: block or action: block (for transforms/redirects)
+  const isInsideActionsBlock = (yaml, lineNum) => {
+    const lines = yaml.split('\n').slice(0, lineNum);
+    let actionsIndent = -1;
+    let currentIndent = 0;
+    
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i];
+      const trimmed = line.trim();
+      if (trimmed === '' || trimmed.startsWith('#')) continue;
+      
+      const indent = line.search(/\S/);
+      
+      // Check if we hit actions: or action: with nested content
+      if (trimmed === 'actions:' || trimmed === 'action:' || 
+          trimmed.startsWith('actions:') || trimmed.startsWith('action:')) {
+        actionsIndent = indent;
+        return true;
+      }
+      
+      // Check for transform: array in redirects
+      if (trimmed === 'transform:' || trimmed.startsWith('transform:')) {
+        return true;
+      }
+      
+      // If we hit when: at same or lower indent, we're not in actions
+      if ((trimmed === 'when:' || trimmed.startsWith('when:')) && indent <= actionsIndent) {
+        return false;
+      }
+      
+      // If we hit a new rule (- name:), we've gone too far back
+      if (trimmed.startsWith('- name:')) {
+        return false;
+      }
+    }
+    return false;
+  };
+
   // =====================================================
   // SYNTAX VALIDATION FUNCTIONS
   // =====================================================
@@ -456,8 +512,12 @@ const RulesAnalyzer = () => {
         }
       }
       
-      // Validate reqProperty values
-      if (trimmed.includes('reqProperty:')) {
+      // Validate reqProperty values - ONLY in condition contexts (when:), not in action targets
+      // In transformations, reqProperty: path is a TARGET, not a condition
+      const context = detectConfigContext(yaml, lineNum);
+      const isInActionsBlock = isInsideActionsBlock(yaml, lineNum);
+      
+      if (trimmed.includes('reqProperty:') && !isInActionsBlock) {
         const propMatch = trimmed.match(/reqProperty:\s*['"]?(\w+(?:\/\d+)?)['"]?/);
         if (propMatch) {
           const propValue = propMatch[1];
@@ -473,7 +533,7 @@ const RulesAnalyzer = () => {
         }
       }
       
-      // Validate operators
+      // Validate operators - skip validation inside actions/transform blocks
       VALID_VALUES.operators.forEach(op => {
         if (trimmed.startsWith(op + ':')) {
           // Valid operator found - no action needed
