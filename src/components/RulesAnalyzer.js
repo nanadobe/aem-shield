@@ -89,8 +89,8 @@ const VALID_VALUES = {
   // WAF flags (from wafData)
   wafFlags: Object.keys(WAF_FLAGS),
   
-  // CDN config kind
-  kindTypes: ['CDN'],
+  // Config kind types (from Adobe docs)
+  kindTypes: ['CDN', 'MaintenanceTasks', 'LogForwarding', 'API'],
   
   // Redirect status codes
   redirectStatuses: [301, 302, 303, 307, 308],
@@ -108,7 +108,79 @@ const VALID_VALUES = {
     'responseTransformations', 
     'redirects', 
     'originSelectors',
-    'origins'
+    'origins',
+    'errorPages',
+    'cdn'
+  ],
+  
+  // Rate limit properties
+  rateLimitProperties: ['limit', 'window', 'count', 'penalty', 'groupBy'],
+  
+  // Valid top-level properties
+  topLevelProperties: ['kind', 'version', 'metadata', 'data'],
+  
+  // Metadata properties (Adobe docs show both envTypes and envType)
+  metadataProperties: ['envTypes', 'envType'],
+  
+  // Environment types
+  envTypes: ['dev', 'stage', 'prod'],
+  
+  // Rule-level properties (within rules array)
+  ruleProperties: ['name', 'when', 'action', 'actions', 'rateLimit', 'alert'],
+  
+  // Condition properties (within when block)
+  conditionProperties: [
+    'reqProperty', 'reqHeader', 'reqCookie', 'queryParam', 'queryParamValue',
+    'allOf', 'anyOf',
+    'equals', 'notEquals', 'like', 'notLike', 'matches', 'doesNotMatch',
+    'in', 'notIn', 'exists', 'doesNotExist'
+  ],
+  
+  // Action object properties (when action is an object)
+  actionObjectProperties: ['type', 'wafFlags', 'status', 'location', 'transform', 'originName', 'value'],
+  
+  // Transform action properties
+  transformProperties: [
+    'type', 'op', 'match', 'replacement', 'value',
+    'reqProperty', 'reqHeader', 'reqCookie', 'queryParam',
+    'respProperty', 'respHeader', 'respCookie',
+    'var', 'logProperty'
+  ],
+  
+  // Redirect action properties
+  redirectProperties: ['type', 'status', 'location', 'transform'],
+  
+  // Origin selector properties
+  originSelectorProperties: ['type', 'originName'],
+  
+  // All valid YAML property names combined (for general validation)
+  allValidProperties: [
+    // Top level
+    'kind', 'version', 'metadata', 'data',
+    // Metadata
+    'envTypes', 'envType',
+    // Sections
+    'trafficFilters', 'requestTransformations', 'responseTransformations', 
+    'redirects', 'originSelectors', 'origins', 'rules', 'errorPages', 'cdn',
+    // Rule properties
+    'name', 'when', 'action', 'actions', 'rateLimit', 'alert',
+    // Condition properties
+    'reqProperty', 'reqHeader', 'reqCookie', 'queryParam', 'queryParamValue',
+    'allOf', 'anyOf',
+    'equals', 'notEquals', 'like', 'notLike', 'matches', 'doesNotMatch',
+    'in', 'notIn', 'exists', 'doesNotExist',
+    // Rate limit
+    'limit', 'window', 'count', 'penalty', 'groupBy',
+    // Action properties
+    'type', 'wafFlags', 'status', 'location', 'transform', 'originName',
+    // Transform properties
+    'op', 'match', 'replacement', 'value',
+    'respProperty', 'respHeader', 'respCookie',
+    'var', 'logProperty',
+    // Origin properties
+    'domain', 'timeout', 'forwardHost', 'forwardAuthorization', 'forwardCookie', 'headers',
+    // Special
+    'removeMarketingParams'
   ],
   
   // Special boolean properties
@@ -468,9 +540,216 @@ const RulesAnalyzer = () => {
             line: lineNum,
             type: 'value',
             severity: 'error',
-            message: `Invalid kind: "${kindValue}". Must be "CDN"`,
-            suggestion: 'Use kind: "CDN"'
+            message: `Invalid kind: "${kindValue}"`,
+            suggestion: `Valid kind values: ${VALID_VALUES.kindTypes.join(', ')}`
           });
+        }
+      }
+      
+      // Validate data section properties (check for typos like trafficFiltersaaa)
+      // Look for lines that are direct children of data: (typically at a specific indent level)
+      // First, detect if we're under 'data:' or 'metadata:' by looking back
+      let parentSection = null;
+      for (let j = i - 1; j >= 0; j--) {
+        const prevLine = lines[j].trim();
+        const prevIndent = lines[j].length - lines[j].trimStart().length;
+        if (prevIndent < indent && prevLine.endsWith(':')) {
+          parentSection = prevLine.replace(':', '').trim();
+          break;
+        }
+      }
+      
+      // Check if this looks like a section declaration (word followed by colon, not a list item)
+      if (trimmed.match(/^[a-zA-Z]+:/) && !trimmed.startsWith('-')) {
+        const sectionName = trimmed.split(':')[0].trim();
+        
+        // If parent is 'data:', validate against configSections
+        if (parentSection === 'data') {
+          if (!VALID_VALUES.configSections.includes(sectionName)) {
+            const similarSection = VALID_VALUES.configSections.find(s => 
+              sectionName.toLowerCase().includes(s.toLowerCase().slice(0, 5)) ||
+              s.toLowerCase().includes(sectionName.toLowerCase().slice(0, 5))
+            );
+            errors.push({
+              line: lineNum,
+              type: 'section',
+              severity: 'error',
+              message: `Invalid configuration section: "${sectionName}"`,
+              suggestion: similarSection 
+                ? `Did you mean "${similarSection}"? Valid sections under data: ${VALID_VALUES.configSections.join(', ')}`
+                : `Valid sections under data: are: ${VALID_VALUES.configSections.join(', ')}`
+            });
+          }
+        }
+        
+        // If parent is 'metadata:', validate against metadataProperties
+        if (parentSection === 'metadata') {
+          if (!VALID_VALUES.metadataProperties.includes(sectionName)) {
+            errors.push({
+              line: lineNum,
+              type: 'property',
+              severity: 'error',
+              message: `Invalid metadata property: "${sectionName}"`,
+              suggestion: `Valid metadata properties are: ${VALID_VALUES.metadataProperties.join(', ')}`
+            });
+          }
+        }
+        
+        // If parent is 'rateLimit:', validate against rateLimitProperties
+        if (parentSection === 'rateLimit') {
+          if (!VALID_VALUES.rateLimitProperties.includes(sectionName)) {
+            const similarProp = VALID_VALUES.rateLimitProperties.find(p => 
+              sectionName.toLowerCase().startsWith(p.toLowerCase().slice(0, 3))
+            );
+            errors.push({
+              line: lineNum,
+              type: 'property',
+              severity: 'error',
+              message: `Invalid rateLimit property: "${sectionName}"`,
+              suggestion: similarProp 
+                ? `Did you mean "${similarProp}"? Valid: ${VALID_VALUES.rateLimitProperties.join(', ')}`
+                : `Valid rateLimit properties: ${VALID_VALUES.rateLimitProperties.join(', ')}`
+            });
+          }
+        }
+      }
+      
+      // =====================================================
+      // COMPREHENSIVE PROPERTY VALIDATION
+      // =====================================================
+      
+      // Extract property name if this line defines a property (key: value or key:)
+      const propertyMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9_]*)\s*:/);
+      if (propertyMatch && !trimmed.startsWith('-')) {
+        const propName = propertyMatch[1];
+        
+        // Check if this is a valid property name
+        if (!VALID_VALUES.allValidProperties.includes(propName)) {
+          // Find similar valid properties for suggestion
+          const findSimilar = (prop) => {
+            const propLower = prop.toLowerCase();
+            return VALID_VALUES.allValidProperties.find(valid => {
+              const validLower = valid.toLowerCase();
+              // Check prefix match (3+ chars)
+              if (propLower.length >= 3 && validLower.startsWith(propLower.slice(0, 3))) return true;
+              if (validLower.length >= 3 && propLower.startsWith(validLower.slice(0, 3))) return true;
+              // Check contains
+              if (propLower.includes(validLower) || validLower.includes(propLower)) return true;
+              // Check Levenshtein-like similarity (simple version)
+              let matches = 0;
+              for (let i = 0; i < Math.min(propLower.length, validLower.length); i++) {
+                if (propLower[i] === validLower[i]) matches++;
+              }
+              return matches >= Math.min(propLower.length, validLower.length) * 0.7;
+            });
+          };
+          
+          const similarProp = findSimilar(propName);
+          
+          // Determine context for better suggestions
+          let contextHint = '';
+          if (propName.toLowerCase().includes('traffic') || propName.toLowerCase().includes('filter')) {
+            contextHint = 'trafficFilters';
+          } else if (propName.toLowerCase().includes('request') || propName.toLowerCase().includes('transform')) {
+            contextHint = 'requestTransformations';
+          } else if (propName.toLowerCase().includes('response')) {
+            contextHint = 'responseTransformations';
+          } else if (propName.toLowerCase().includes('redirect')) {
+            contextHint = 'redirects';
+          } else if (propName.toLowerCase().includes('origin')) {
+            contextHint = 'originSelectors or origins';
+          } else if (propName.toLowerCase().includes('limit') || propName.toLowerCase().includes('window') || 
+                     propName.toLowerCase().includes('count') || propName.toLowerCase().includes('penalty')) {
+            contextHint = 'rateLimit (valid: limit, window, count, penalty, groupBy)';
+          }
+          
+          errors.push({
+            line: lineNum,
+            type: 'property',
+            severity: 'error',
+            message: `Unknown property: "${propName}"`,
+            suggestion: similarProp 
+              ? `Did you mean "${similarProp}"?${contextHint ? ` Context: ${contextHint}` : ''}`
+              : `Check for typos.${contextHint ? ` This looks like it belongs in ${contextHint}` : ' Valid properties include: name, when, action, type, etc.'}`
+          });
+        }
+      }
+      
+      // Additional check: property names should not contain numbers (except special cases)
+      if (trimmed.match(/^[a-zA-Z]+[0-9]+[a-zA-Z]*\s*:/)) {
+        const propName = trimmed.split(':')[0].trim();
+        // Whitelist special cases like clientIp/24
+        if (!propName.includes('/')) {
+          errors.push({
+            line: lineNum,
+            type: 'property',
+            severity: 'error',
+            message: `Invalid property name: "${propName}" - contains unexpected numbers`,
+            suggestion: 'Property names should not contain numbers. Check for typos.'
+          });
+        }
+      }
+      
+      // Validate specific property values based on context
+      // Rate limit count validation
+      if (trimmed.match(/^count\s*:\s*(\w+)/)) {
+        const countValue = trimmed.match(/^count\s*:\s*(\w+)/)[1];
+        if (!VALID_VALUES.rateCountTypes.includes(countValue)) {
+          errors.push({
+            line: lineNum,
+            type: 'value',
+            severity: 'error',
+            message: `Invalid count value: "${countValue}"`,
+            suggestion: `Valid values are: ${VALID_VALUES.rateCountTypes.join(', ')}`
+          });
+        }
+      }
+      
+      // Transform op validation
+      if (trimmed.match(/^op\s*:\s*(\w+)/)) {
+        const opValue = trimmed.match(/^op\s*:\s*(\w+)/)[1];
+        if (!VALID_VALUES.transformOperations.includes(opValue)) {
+          errors.push({
+            line: lineNum,
+            type: 'value',
+            severity: 'error',
+            message: `Invalid transform operation: "${opValue}"`,
+            suggestion: `Valid operations are: ${VALID_VALUES.transformOperations.join(', ')}`
+          });
+        }
+      }
+      
+      // Status code validation for redirects
+      if (trimmed.match(/^status\s*:\s*(\d+)/)) {
+        const statusValue = parseInt(trimmed.match(/^status\s*:\s*(\d+)/)[1]);
+        if (!VALID_VALUES.redirectStatuses.includes(statusValue)) {
+          errors.push({
+            line: lineNum,
+            type: 'value',
+            severity: 'error',
+            message: `Invalid redirect status: ${statusValue}`,
+            suggestion: `Valid redirect statuses are: ${VALID_VALUES.redirectStatuses.join(', ')}`
+          });
+        }
+      }
+      
+      // envTypes validation
+      if (trimmed.startsWith('- ') && !trimmed.includes(':')) {
+        const value = trimmed.replace('- ', '').trim().replace(/['"]/g, '');
+        // Check if we're likely in envTypes context (look back for envTypes:)
+        for (let j = i - 1; j >= Math.max(0, i - 5); j--) {
+          if (lines[j].trim() === 'envTypes:') {
+            if (!VALID_VALUES.envTypes.includes(value) && value.match(/^[a-z]+$/)) {
+              errors.push({
+                line: lineNum,
+                type: 'value',
+                severity: 'error',
+                message: `Invalid environment type: "${value}"`,
+                suggestion: `Valid envTypes are: ${VALID_VALUES.envTypes.join(', ')}`
+              });
+            }
+            break;
+          }
         }
       }
       
