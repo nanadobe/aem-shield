@@ -142,6 +142,8 @@ const RulesAnalyzer = () => {
   const [yamlInput, setYamlInput] = useState('');
   const [analyzedRules, setAnalyzedRules] = useState([]);
   const [showWafReference, setShowWafReference] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterType, setFilterType] = useState('all'); // all, waf, rateLimit, geoBlock, trafficFilter
   const [showSyntaxReference, setShowSyntaxReference] = useState(false);
   const [showExamples, setShowExamples] = useState(false);
   const [parseError, setParseError] = useState(null);
@@ -1317,88 +1319,219 @@ const RulesAnalyzer = () => {
     return { type: 'Traffic Filter', color: 'gray', icon: '🔒' };
   };
 
+  // Generate a simple, plain English one-liner summary
+  const getPlainEnglishSummary = (rule) => {
+    const parts = [];
+    
+    // Action verb
+    const actionVerb = {
+      block: 'Blocks',
+      log: 'Logs (but allows)',
+      allow: 'Allows'
+    }[rule.action] || 'Processes';
+    
+    parts.push(actionVerb);
+    
+    // What it's targeting
+    if (rule.wafFlags.length > 0) {
+      const attackTypes = rule.wafFlags.map(f => {
+        const flagData = WAF_FLAGS[f];
+        return flagData?.attackType || f;
+      }).filter((v, i, a) => a.indexOf(v) === i); // unique
+      parts.push(`${attackTypes.join(' and ')} attacks`);
+    } else if (rule.rateLimit) {
+      const totalAllowed = rule.rateLimit.limit * rule.rateLimit.window;
+      parts.push(`requests exceeding ${rule.rateLimit.limit}/sec (${totalAllowed.toLocaleString()} total in ${rule.rateLimit.window}s)`);
+    } else if (rule.geoBlock && rule.geoBlock.countries.length > 0) {
+      parts.push(`traffic from ${rule.geoBlock.countries.length} ${rule.geoBlock.countries.length === 1 ? 'country' : 'countries'}`);
+    } else if (rule.conditions.length > 0) {
+      // Describe the main condition
+      const mainCond = rule.conditions[0];
+      const propLabels = {
+        path: 'requests to specific paths',
+        clientIp: 'requests from specific IPs',
+        clientCountry: 'requests from specific countries',
+        userAgent: 'requests with specific user agents',
+        method: 'specific HTTP methods',
+        tier: 'requests on specific tier',
+        domain: 'requests to specific domain'
+      };
+      parts.push(propLabels[mainCond.property] || `requests matching ${mainCond.property}`);
+    } else {
+      parts.push('matching requests');
+    }
+    
+    // Tier context
+    if (rule.tier === 'publish') {
+      parts.push('on the public website');
+    } else if (rule.tier === 'author') {
+      parts.push('on the authoring instance');
+    }
+    
+    // Alert
+    if (rule.alert) {
+      parts.push('and sends alerts');
+    }
+    
+    return parts.join(' ') + '.';
+  };
+
   const getRuleExplanation = (rule) => {
     const parts = [];
     const ruleType = getRuleType(rule);
     
-    // Start with rule type
-    parts.push(`**${ruleType.type}**: `);
+    // Start with a plain English summary
+    parts.push(`\n📝 **What this rule does in simple terms:**\n${getPlainEnglishSummary(rule)}\n`);
     
-    // Explain WAF flags
+    // Explain WAF flags in plain English
     if (rule.wafFlags.length > 0) {
-      const flagDescriptions = rule.wafFlags.map(flag => {
+      parts.push(`\n\n🛡️ **Security Protections:**\n`);
+      rule.wafFlags.forEach(flag => {
         const flagData = WAF_FLAGS[flag];
-        return flagData ? `**${flag}** (${flagData.attackType})` : flag;
+        if (flagData) {
+          parts.push(`• **${flag}**: Detects ${flagData.attackType.toLowerCase()} attacks. ${flagData.description}\n`);
+        } else {
+          parts.push(`• **${flag}**: Security flag protection\n`);
+        }
       });
-      parts.push(`Monitors for ${flagDescriptions.join(', ')} attack patterns. `);
       
-      // Add specific WAF flag advice
+      // Add specific WAF flag advice in plain English
       if (rule.wafFlags.includes('ATTACK-FROM-BAD-IP')) {
-        parts.push(`\n\n💡 **Best Practice**: ATTACK-FROM-BAD-IP is safe to use in BLOCK mode immediately because it only triggers when both an attack pattern AND known malicious IP are detected. `);
+        parts.push(`\n💚 **Safe to Block**: This rule only fires when BOTH a known bad IP AND an attack pattern are detected. Very low false positive risk.\n`);
       }
       if (rule.wafFlags.includes('ATTACK') && rule.action !== 'log') {
-        parts.push(`\n\n⚠️ **Recommendation**: Consider using LOG mode initially for the ATTACK flag to avoid potential false positives, then switch to BLOCK after validating CDN logs. `);
+        parts.push(`\n⚠️ **Caution**: The ATTACK flag can sometimes match legitimate requests. Consider starting with LOG mode to monitor before blocking.\n`);
       }
     }
     
-    // Explain rate limiting
+    // Explain rate limiting in plain English
     if (rule.rateLimit) {
       const rl = rule.rateLimit;
-      parts.push(`\n\n**Rate Limit Configuration**:\n`);
-      parts.push(`- Maximum ${rl.limit} requests per ${rl.window} second window\n`);
-      parts.push(`- Counting: ${rl.count === 'fetches' ? 'Only origin fetches (cache misses)' : rl.count === 'errors' ? 'Only error responses' : 'All requests'}\n`);
-      if (rl.penalty) {
-        parts.push(`- Penalty: Block violating clients for ${rl.penalty} seconds (${Math.round(rl.penalty / 60)} minutes)\n`);
+      const totalAllowed = rl.limit * rl.window;
+      parts.push(`\n\n⏱️ **Rate Limiting Explained:**\n`);
+      parts.push(`This rule allows **${rl.limit} requests per second** measured over a **${rl.window}-second** window.\n`);
+      parts.push(`That means up to **${totalAllowed.toLocaleString()} total requests** are allowed in any ${rl.window}-second period.\n`);
+      
+      if (rl.count === 'fetches') {
+        parts.push(`\n📌 Only counting requests that reach your server (ignores cached responses).\n`);
+      } else if (rl.count === 'errors') {
+        parts.push(`\n📌 Only counting failed requests (4xx/5xx errors). Good for detecting brute force attacks.\n`);
+      } else {
+        parts.push(`\n📌 Counting ALL requests including those served from cache.\n`);
       }
-      if (rl.groupBy) {
-        parts.push(`- Grouped by: ${rl.groupBy.join(', ')}\n`);
+      
+      if (rl.penalty) {
+        const minutes = Math.round(rl.penalty / 60);
+        parts.push(`\n🚫 **Penalty**: Once limit is exceeded, the offender is blocked for **${minutes} minute${minutes !== 1 ? 's' : ''}** (${rl.penalty} seconds).\n`);
+      }
+      
+      if (rl.groupBy && rl.groupBy.length > 0) {
+        const groupDesc = {
+          clientIp: 'each IP address',
+          'clientIp/24': 'each IP subnet (/24)',
+          clientCountry: 'each country',
+          path: 'each URL path'
+        };
+        const groups = rl.groupBy.map(g => groupDesc[g] || g);
+        parts.push(`\n👥 Limits are tracked separately for ${groups.join(' and ')}.\n`);
       }
     }
     
-    // Explain geo-blocking
+    // Explain geo-blocking in plain English
     if (rule.geoBlock && rule.geoBlock.countries.length > 0) {
+      parts.push(`\n\n🌍 **Geographic Blocking:**\n`);
       const countryNames = rule.geoBlock.countries.map(code => {
         const country = OFAC_COUNTRIES.find(c => c.code === code);
-        return country ? `${country.name} (${code})` : code;
+        return country ? country.name : code;
       });
-      parts.push(`\n\n**Geographic Restrictions**:\n`);
-      parts.push(`Blocks traffic from: ${countryNames.join(', ')}`);
+      if (countryNames.length <= 5) {
+        parts.push(`Traffic from ${countryNames.join(', ')} will be ${rule.action === 'block' ? 'blocked' : 'affected'}.\n`);
+      } else {
+        parts.push(`Traffic from ${countryNames.slice(0, 5).join(', ')} and ${countryNames.length - 5} other countries will be ${rule.action === 'block' ? 'blocked' : 'affected'}.\n`);
+      }
     }
     
-    // Explain conditions
+    // Explain conditions in plain English
     if (rule.conditions.length > 0) {
-      parts.push(`\n\n**Conditions** (${rule.conditionLogic || 'single'}):\n`);
+      parts.push(`\n\n🎯 **When does this rule apply?**\n`);
+      const logic = rule.conditionLogic === 'OR' ? 'ANY' : 'ALL';
+      if (rule.conditions.length > 1) {
+        parts.push(`The request must match **${logic}** of these conditions:\n`);
+      }
+      
       rule.conditions.forEach(cond => {
-        const propInfo = REQUEST_PROPERTIES.find(p => p.value === cond.property);
-        const opInfo = MATCH_OPERATORS.find(o => o.value === cond.operator);
-        parts.push(`- ${propInfo?.label || cond.property} ${opInfo?.label || cond.operator} "${Array.isArray(cond.value) ? cond.value.join(', ') : cond.value}"\n`);
+        const conditionDesc = getConditionDescription(cond);
+        parts.push(`• ${conditionDesc}\n`);
       });
     }
     
-    // Explain tier
+    // Explain tier in plain English
     if (rule.tier) {
-      const tierDesc = rule.tier === 'both' ? 'Both Author and Publish tiers' : 
-                       rule.tier === 'author' ? 'Author tier only (content editors)' : 
-                       'Publish tier only (public users)';
-      parts.push(`\n\n**Applies to**: ${tierDesc}`);
+      parts.push(`\n\n📍 **Where it applies:**\n`);
+      if (rule.tier === 'both') {
+        parts.push(`Both the public website (publish) and content authoring (author) environments.\n`);
+      } else if (rule.tier === 'author') {
+        parts.push(`Only the content authoring environment (where editors work).\n`);
+      } else {
+        parts.push(`Only the public website (what visitors see).\n`);
+      }
     }
     
-    // Explain action
+    // Explain action in plain English
     if (rule.action) {
+      parts.push(`\n\n⚡ **What happens when triggered:**\n`);
       const actionDesc = {
-        block: '🚫 **BLOCK**: Immediately rejects matching requests with 403 Forbidden',
-        log: '📝 **LOG**: Records matching requests in CDN logs but allows them through. Useful for testing rules before blocking.',
-        allow: '✅ **ALLOW**: Explicitly permits matching requests, bypassing subsequent blocking rules'
+        block: `The request is **immediately rejected** with a 403 Forbidden error. The user sees an error page.`,
+        log: `The request is **allowed through** but recorded in CDN logs. Use this to test rules safely before blocking.`,
+        allow: `The request is **explicitly allowed** to proceed, skipping any subsequent blocking rules.`
       };
-      parts.push(`\n\n**Action**: ${actionDesc[rule.action] || rule.action}`);
+      parts.push(`${actionDesc[rule.action] || rule.action}\n`);
     }
     
-    // Alert status
+    // Alert status in plain English
     if (rule.alert) {
-      parts.push(`\n\n🔔 **Alerts Enabled**: Notifications will be sent when this rule triggers.`);
+      parts.push(`\n\n🔔 **Notifications:**\n`);
+      parts.push(`You will receive alerts when this rule is triggered. Check your Cloud Manager notification settings.\n`);
     }
     
     return parts.join('');
+  };
+
+  // Helper function to describe conditions in plain English
+  const getConditionDescription = (cond) => {
+    const propDescriptions = {
+      path: 'the URL path',
+      url: 'the full URL',
+      queryString: 'the query parameters',
+      method: 'the HTTP method',
+      tier: 'the environment tier',
+      domain: 'the domain name',
+      clientIp: 'the visitor\'s IP address',
+      clientCountry: 'the visitor\'s country',
+      clientAsn: 'the visitor\'s network provider',
+      clientRegion: 'the visitor\'s region',
+      userAgent: 'the browser/user agent',
+      referer: 'the referring page'
+    };
+    
+    const operatorDescriptions = {
+      equals: 'is exactly',
+      notEquals: 'is not',
+      like: 'contains',
+      notLike: 'does not contain',
+      matches: 'matches the pattern',
+      doesNotMatch: 'does not match the pattern',
+      in: 'is one of',
+      notIn: 'is not one of',
+      exists: 'is present',
+      doesNotExist: 'is not present'
+    };
+    
+    const propLabel = propDescriptions[cond.property] || cond.property;
+    const opLabel = operatorDescriptions[cond.operator] || cond.operator;
+    const value = Array.isArray(cond.value) ? cond.value.join(', ') : cond.value;
+    
+    return `${propLabel} ${opLabel} "${value}"`;
   };
 
   const getTriggeredExamples = (rule) => {
@@ -1968,10 +2101,115 @@ data:
 
               {analyzedRules.length > 0 ? (
                 <div className="rules-list">
-                  <div className="results-header">
-                    <h3>{analyzedRules.length} Rule{analyzedRules.length !== 1 ? 's' : ''} Analyzed</h3>
+                  {/* Search and Filter Bar */}
+                  <div className="rules-search-bar">
+                    <div className="search-input-wrapper">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="11" cy="11" r="8" />
+                        <path d="m21 21-4.35-4.35" />
+                      </svg>
+                      <input
+                        type="text"
+                        className="search-input"
+                        placeholder="Search rules by name, flag, action, condition..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                      />
+                      {searchQuery && (
+                        <button className="clear-search" onClick={() => setSearchQuery('')}>×</button>
+                      )}
+                    </div>
+                    <div className="filter-buttons">
+                      <button 
+                        className={`filter-btn ${filterType === 'all' ? 'active' : ''}`}
+                        onClick={() => setFilterType('all')}
+                      >
+                        All ({analyzedRules.length})
+                      </button>
+                      <button 
+                        className={`filter-btn waf ${filterType === 'waf' ? 'active' : ''}`}
+                        onClick={() => setFilterType('waf')}
+                      >
+                        🛡️ WAF ({analyzedRules.filter(r => r.wafFlags.length > 0).length})
+                      </button>
+                      <button 
+                        className={`filter-btn rate ${filterType === 'rateLimit' ? 'active' : ''}`}
+                        onClick={() => setFilterType('rateLimit')}
+                      >
+                        ⏱️ Rate Limit ({analyzedRules.filter(r => r.rateLimit).length})
+                      </button>
+                      <button 
+                        className={`filter-btn geo ${filterType === 'geoBlock' ? 'active' : ''}`}
+                        onClick={() => setFilterType('geoBlock')}
+                      >
+                        🌍 Geo ({analyzedRules.filter(r => r.geoBlock).length})
+                      </button>
+                      <button 
+                        className={`filter-btn traffic ${filterType === 'trafficFilter' ? 'active' : ''}`}
+                        onClick={() => setFilterType('trafficFilter')}
+                      >
+                        🔒 Traffic ({analyzedRules.filter(r => !r.wafFlags.length && !r.rateLimit && !r.geoBlock).length})
+                      </button>
+                    </div>
                   </div>
-                  {analyzedRules.map((rule, index) => {
+
+                  <div className="results-header">
+                    <h3>
+                      {(() => {
+                        const filtered = analyzedRules.filter(rule => {
+                          // Apply type filter
+                          if (filterType === 'waf' && rule.wafFlags.length === 0) return false;
+                          if (filterType === 'rateLimit' && !rule.rateLimit) return false;
+                          if (filterType === 'geoBlock' && !rule.geoBlock) return false;
+                          if (filterType === 'trafficFilter' && (rule.wafFlags.length > 0 || rule.rateLimit || rule.geoBlock)) return false;
+                          
+                          // Apply search
+                          if (!searchQuery.trim()) return true;
+                          const query = searchQuery.toLowerCase();
+                          return (
+                            rule.name?.toLowerCase().includes(query) ||
+                            rule.action?.toLowerCase().includes(query) ||
+                            rule.wafFlags.some(f => f.toLowerCase().includes(query)) ||
+                            rule.conditions.some(c => 
+                              c.property?.toLowerCase().includes(query) ||
+                              String(c.value)?.toLowerCase().includes(query)
+                            ) ||
+                            (rule.tier && rule.tier.toLowerCase().includes(query))
+                          );
+                        });
+                        return `${filtered.length} of ${analyzedRules.length} Rule${analyzedRules.length !== 1 ? 's' : ''} ${searchQuery || filterType !== 'all' ? '(filtered)' : 'Analyzed'}`;
+                      })()}
+                    </h3>
+                    {(searchQuery || filterType !== 'all') && (
+                      <button 
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => { setSearchQuery(''); setFilterType('all'); }}
+                      >
+                        Clear Filters
+                      </button>
+                    )}
+                  </div>
+                  {analyzedRules.filter(rule => {
+                    // Apply type filter
+                    if (filterType === 'waf' && rule.wafFlags.length === 0) return false;
+                    if (filterType === 'rateLimit' && !rule.rateLimit) return false;
+                    if (filterType === 'geoBlock' && !rule.geoBlock) return false;
+                    if (filterType === 'trafficFilter' && (rule.wafFlags.length > 0 || rule.rateLimit || rule.geoBlock)) return false;
+                    
+                    // Apply search
+                    if (!searchQuery.trim()) return true;
+                    const query = searchQuery.toLowerCase();
+                    return (
+                      rule.name?.toLowerCase().includes(query) ||
+                      rule.action?.toLowerCase().includes(query) ||
+                      rule.wafFlags.some(f => f.toLowerCase().includes(query)) ||
+                      rule.conditions.some(c => 
+                        c.property?.toLowerCase().includes(query) ||
+                        String(c.value)?.toLowerCase().includes(query)
+                      ) ||
+                      (rule.tier && rule.tier.toLowerCase().includes(query))
+                    );
+                  }).map((rule, index) => {
                     const ruleType = getRuleType(rule);
                     return (
                       <div key={index} className="rule-card card animate-slide-up" style={{ animationDelay: `${index * 50}ms` }}>
@@ -2012,10 +2250,23 @@ data:
                           </div>
                         )}
                         
-                        <div className="rule-explanation">
-                          <h4>Detailed Explanation</h4>
-                          <div className="explanation-content" dangerouslySetInnerHTML={{ __html: getRuleExplanation(rule).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br/>') }} />
+                        {/* Plain English Summary - Easy to understand at a glance */}
+                        <div className="rule-summary-box">
+                          <p className="summary-content">{getPlainEnglishSummary(rule)}</p>
                         </div>
+
+                        <details className="rule-explanation-accordion">
+                          <summary className="accordion-header">
+                            <span className="accordion-icon">📖</span>
+                            <span className="accordion-title">Detailed Explanation</span>
+                            <svg className="accordion-chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <polyline points="6 9 12 15 18 9" />
+                            </svg>
+                          </summary>
+                          <div className="accordion-content">
+                            <div className="explanation-content" dangerouslySetInnerHTML={{ __html: getRuleExplanation(rule).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br/>') }} />
+                          </div>
+                        </details>
 
                         {rule.wafFlags.length > 0 && (
                           <div className="rule-flags">
@@ -2098,15 +2349,23 @@ data:
                                 <div className="rate-limit-icon">📊</div>
                                 <div className="rate-limit-content">
                                   <span className="rate-limit-value">{rule.rateLimit.limit}</span>
-                                  <span className="rate-limit-label">requests max</span>
+                                  <span className="rate-limit-label">req/sec</span>
                                 </div>
                               </div>
-                              <div className="rate-limit-arrow">→</div>
+                              <div className="rate-limit-arrow">×</div>
                               <div className="rate-limit-item">
                                 <div className="rate-limit-icon">⏱️</div>
                                 <div className="rate-limit-content">
                                   <span className="rate-limit-value">{rule.rateLimit.window}s</span>
-                                  <span className="rate-limit-label">time window</span>
+                                  <span className="rate-limit-label">window</span>
+                                </div>
+                              </div>
+                              <div className="rate-limit-arrow">=</div>
+                              <div className="rate-limit-item calculated">
+                                <div className="rate-limit-icon">📈</div>
+                                <div className="rate-limit-content">
+                                  <span className="rate-limit-value">{(rule.rateLimit.limit * rule.rateLimit.window).toLocaleString()}</span>
+                                  <span className="rate-limit-label">total allowed</span>
                                 </div>
                               </div>
                               {rule.rateLimit.penalty && (
@@ -2123,6 +2382,8 @@ data:
                               )}
                             </div>
                             <p className="rate-limit-summary">
+                              <strong>How it works:</strong> {rule.rateLimit.limit} req/sec × {rule.rateLimit.window}s = <strong>{(rule.rateLimit.limit * rule.rateLimit.window).toLocaleString()} total requests</strong> allowed in the window.
+                              <br/>
                               {rule.rateLimit.count === 'fetches' 
                                 ? '📌 Only counting requests that reach origin (cache misses)'
                                 : rule.rateLimit.count === 'errors'

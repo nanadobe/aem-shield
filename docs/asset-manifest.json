@@ -1,13 +1,13 @@
 {
   "files": {
-    "main.css": "/aem-shield/static/css/main.43d232b2.css",
-    "main.js": "/aem-shield/static/js/main.e890fc65.js",
+    "main.css": "/aem-shield/static/css/main.e7b358d3.css",
+    "main.js": "/aem-shield/static/js/main.853162b6.js",
     "index.html": "/aem-shield/index.html",
-    "main.43d232b2.css.map": "/aem-shield/static/css/main.43d232b2.css.map",
-    "main.e890fc65.js.map": "/aem-shield/static/js/main.e890fc65.js.map"
+    "main.e7b358d3.css.map": "/aem-shield/static/css/main.e7b358d3.css.map",
+    "main.853162b6.js.map": "/aem-shield/static/js/main.853162b6.js.map"
   },
   "entrypoints": [
-    "static/css/main.43d232b2.css",
-    "static/js/main.e890fc65.js"
+    "static/css/main.e7b358d3.css",
+    "static/js/main.853162b6.js"
   ]
 }
